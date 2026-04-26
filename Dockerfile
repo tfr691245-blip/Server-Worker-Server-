@@ -1,31 +1,37 @@
-# Use Ubuntu Noble (24.04)
-FROM ubuntu:noble
+# Use Alpine for the smallest, fastest footprint (approx 5MB base)
+FROM alpine:latest
 
-# Prevent interactive prompts
-ENV DEBIAN_FRONTEND=noninteractive
-
-# 1. Install Postfix and all necessary SASL/SSL modules
-RUN apt-get update && apt-get install -y \
+# 1. Install Postfix and SASL modules
+# Alpine's package manager (apk) is much faster than apt
+RUN apk add --no-network --no-cache \
     postfix \
-    libsasl2-modules \
-    libsasl2-modules-db \
-    libsasl2-2 \
+    cyrus-sasl \
+    cyrus-sasl-plain \
+    cyrus-sasl-login \
     ca-certificates \
-    sasl2-bin \
-    && rm -rf /var/lib/apt/lists/*
+    tzdata
 
-# 2. Pre-configure Postfix with the Direct IP Fix
-# - [142.251.10.108] is the stable IPv4 for smtp.gmail.com
-# - smtp_tls_verify_cert_match = nexthop allows the IP to trust the Gmail SSL cert
+# 2. Master Level Postfix Optimization
+# - inet_protocols = ipv4: Stops DNS lag
+# - bounce_queue_lifetime = 1h: Don't clog memory with old failed mail
+# - maximal_queue_lifetime = 1h: Keeps the queue lean
+# - smtp_destination_concurrency_limit = 20: Sends more emails at once
 RUN postconf -e "relayhost = [142.251.10.108]:587" \
     && postconf -e "inet_protocols = ipv4" \
+    && postconf -e "maillog_file = /dev/stdout" \
     && postconf -e "smtp_sasl_auth_enable = yes" \
     && postconf -e "smtp_sasl_password_maps = static:pyypl2005@gmail.com:gnrbyxyyjxyoaljv" \
     && postconf -e "smtp_sasl_security_options = noanonymous" \
     && postconf -e "smtp_tls_security_level = encrypt" \
     && postconf -e "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt" \
     && postconf -e "smtp_tls_verify_cert_match = nexthop" \
-    && postconf -e "maillog_file = /dev/stdout"
+    && postconf -e "minimal_backoff_time = 30s" \
+    && postconf -e "maximal_backoff_time = 120s" \
+    && postconf -e "smtp_destination_concurrency_limit = 20"
 
-# 3. Start Postfix in the foreground
-CMD ["/usr/sbin/postfix", "start-fg"]
+# 3. Create the spool directory and fix permissions
+RUN /usr/bin/newaliases
+
+# Start Postfix in foreground mode for Docker
+EXPOSE 25
+CMD ["postfix", "start-fg"]

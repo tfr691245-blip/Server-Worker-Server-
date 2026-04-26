@@ -1,6 +1,15 @@
-FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y --no-install-recommends python3 nodejs curl
-COPY . /app
-WORKDIR /app
-# Change the line below to match your startup file
-CMD ["node", "server.js"]
+# Use your existing base image
+FROM ubuntu:noble 
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install the critical SASL and SSL components
+RUN apt-get update && apt-get install -y \
+    libsasl2-modules \
+    ca-certificates \
+    postfix \
+    sasl2-bin \
+    && rm -rf /var/lib/apt/lists/*
+
+# Your existing app setup code follows...

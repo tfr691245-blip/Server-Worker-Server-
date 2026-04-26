@@ -2,14 +2,14 @@
 FROM alpine:latest
 
 # 1. Install Postfix and SASL modules
-# Removed --no-network so it can actually download the packages
+# Fixed package names for Alpine compatibility
 RUN apk add --no-cache \
     postfix \
     cyrus-sasl \
-    cyrus-sasl-plain \
     cyrus-sasl-login \
     ca-certificates \
-    tzdata
+    tzdata \
+    && update-ca-certificates
 
 # 2. Master Level Postfix Optimization
 RUN postconf -e "relayhost = [142.251.10.108]:587" \
@@ -22,8 +22,7 @@ RUN postconf -e "relayhost = [142.251.10.108]:587" \
     && postconf -e "smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt" \
     && postconf -e "smtp_tls_verify_cert_match = nexthop" \
     && postconf -e "minimal_backoff_time = 30s" \
-    && postconf -e "maximal_backoff_time = 120s" \
-    && postconf -e "smtp_destination_concurrency_limit = 20"
+    && postconf -e "maximal_backoff_time = 120s"
 
 # 3. Finalize setup
 RUN /usr/bin/newaliases

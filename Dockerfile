@@ -1,9 +1,9 @@
-# Use Alpine for the smallest, fastest footprint (approx 5MB base)
+# Use Alpine for the smallest, fastest footprint
 FROM alpine:latest
 
 # 1. Install Postfix and SASL modules
-# Alpine's package manager (apk) is much faster than apt
-RUN apk add --no-network --no-cache \
+# Removed --no-network so it can actually download the packages
+RUN apk add --no-cache \
     postfix \
     cyrus-sasl \
     cyrus-sasl-plain \
@@ -12,10 +12,6 @@ RUN apk add --no-network --no-cache \
     tzdata
 
 # 2. Master Level Postfix Optimization
-# - inet_protocols = ipv4: Stops DNS lag
-# - bounce_queue_lifetime = 1h: Don't clog memory with old failed mail
-# - maximal_queue_lifetime = 1h: Keeps the queue lean
-# - smtp_destination_concurrency_limit = 20: Sends more emails at once
 RUN postconf -e "relayhost = [142.251.10.108]:587" \
     && postconf -e "inet_protocols = ipv4" \
     && postconf -e "maillog_file = /dev/stdout" \
@@ -29,9 +25,9 @@ RUN postconf -e "relayhost = [142.251.10.108]:587" \
     && postconf -e "maximal_backoff_time = 120s" \
     && postconf -e "smtp_destination_concurrency_limit = 20"
 
-# 3. Create the spool directory and fix permissions
+# 3. Finalize setup
 RUN /usr/bin/newaliases
 
-# Start Postfix in foreground mode for Docker
+# Start Postfix
 EXPOSE 25
 CMD ["postfix", "start-fg"]

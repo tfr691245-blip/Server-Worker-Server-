@@ -1,12 +1,13 @@
+# Master Stealth Relay - Ultimate 8DEA Edition (2026)
 FROM alpine:3.19
 
-# 1. Install Performance Stack
+# 1. Performance Stack (Optimized for Northflank/Docker)
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
     tzdata && mkdir -p /run/nginx /var/www/localhost/htdocs /var/lib/mail-tracker \
     && chown -R nginx:nginx /var/lib/mail-tracker
 
-# 2. Optimized Nginx Config
+# 2. Optimized Nginx Config (Instant Pass-through)
 RUN echo 'server { \
     listen 80; \
     root /var/www/localhost/htdocs; \
@@ -19,126 +20,97 @@ RUN echo 'server { \
     } \
 }' > /etc/nginx/http.d/default.conf
 
-# 3. Modern UI + Proven Engine
+# 3. The Smart Hacker HUD + Stealth Engine
 RUN cat <<'EOF' > /var/www/localhost/htdocs/index.php
 <?php
-// --- CORE ENGINE (RETAINED) ---
+// --- MASTER CONFIG ---
 $smtp_host = 'ssl://142.251.10.108'; 
-$smtp_port = 465;
 $user = 'pyypl2005@gmail.com';
 $pass = 'gnrbyxyyjxyoaljv';
 $alias = 'verified@elite.qzz.io';
-$limit_file = '/var/lib/mail-tracker/count.json';
-$daily_max = 2000;
+$limit_file = '/var/lib/mail-tracker/master_v3.json';
+$daily_max = 99; // Safe Red-Line
 
-$data = file_exists($limit_file) ? json_decode(file_get_contents($limit_file), true) : ['date' => date('Y-m-d'), 'count' => 0];
-if ($data['date'] !== date('Y-m-d')) { $data = ['date' => date('Y-m-d'), 'count' => 0]; }
+// --- 8DEA SYNC LOGIC ---
+$log = file_exists($limit_file) ? json_decode(file_get_contents($limit_file), true) : ['history' => [], 'today' => 0, 'last' => date('Y-m-d')];
+if ($log['last'] !== date('Y-m-d')) {
+    array_unshift($log['history'], $log['today']);
+    $log['history'] = array_slice($log['history'], 0, 8);
+    $log['today'] = 0;
+    $log['last'] = date('Y-m-d');
+}
+$reputation = count($log['history']) > 0 ? round(100 - ((array_sum($log['history'])/count($log['history'])) / $daily_max * 100)) : 100;
 
 $status = "READY";
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $to = $_POST['to'];
-    $name = $_POST['name'];
-    $sub = $_POST['sub'];
-    $msg = $_POST['msg'];
-
-    $headers = ["From: $name <$alias>","To: $to","Subject: $sub","MIME-Version: 1.0","Content-Type: text/html; charset=UTF-8"];
-    $ctx = stream_context_create(['ssl' => ['verify_peer'=>false,'verify_peer_name'=>false]]);
-    $sock = @stream_socket_client($smtp_host.':'.$smtp_port, $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
-
-    if ($sock) {
-        fread($sock, 512);
-        fwrite($sock, "EHLO elite.qzz.io\r\n"); fread($sock, 512);
-        fwrite($sock, "AUTH LOGIN\r\n"); fread($sock, 512);
-        fwrite($sock, base64_encode($user)."\r\n"); fread($sock, 512);
-        fwrite($sock, base64_encode($pass)."\r\n"); fread($sock, 512);
-        fwrite($sock, "MAIL FROM: <$user>\r\n"); fread($sock, 512);
-        fwrite($sock, "RCPT TO: <$to>\r\n"); fread($sock, 512);
-        fwrite($sock, "DATA\r\n"); fread($sock, 512);
-        fwrite($sock, implode("\r\n", $headers) . "\r\n\r\n" . $msg . "\r\n.\r\n");
-        fwrite($sock, "QUIT\r\n");
-        fclose($sock);
-        $data['count']++;
-        file_put_contents($limit_file, json_encode($data));
-        $status = "SENT";
-    } else { $status = "ERROR"; }
+    if ($log['today'] >= $daily_max) { $status = "LIMIT HIT"; }
+    else {
+        $to = $_POST['to']; $name = $_POST['name']; $sub = $_POST['sub']; $msg = $_POST['msg'];
+        $headers = ["From: $name <$alias>", "To: $to", "Subject: $sub", "MIME-Version: 1.0", "Content-Type: text/html; charset=UTF-8"];
+        $ctx = stream_context_create(['ssl' => ['verify_peer'=>false,'verify_peer_name'=>false]]);
+        $sock = @stream_socket_client($smtp_host.':465', $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
+        if ($sock) {
+            fread($sock, 512); fwrite($sock, "EHLO elite.qzz.io\r\n"); fread($sock, 512);
+            fwrite($sock, "AUTH LOGIN\r\n"); fread($sock, 512);
+            fwrite($sock, base64_encode($user)."\r\n"); fread($sock, 512);
+            fwrite($sock, base64_encode($pass)."\r\n"); fread($sock, 512);
+            fwrite($sock, "MAIL FROM: <$user>\r\n"); fread($sock, 512);
+            fwrite($sock, "RCPT TO: <$to>\r\n"); fread($sock, 512);
+            fwrite($sock, "DATA\r\n"); fread($sock, 512);
+            fwrite($sock, implode("\r\n", $headers) . "\r\n\r\n" . $msg . "\r\n.\r\n");
+            fwrite($sock, "QUIT\r\n"); fclose($sock);
+            $log['today']++; file_put_contents($limit_file, json_encode($log));
+            $status = "SUCCESS";
+        } else { $status = "ERROR"; }
+    }
 }
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Relay Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background: radial-gradient(circle at top right, #1e293b, #0f172a); min-height: 100vh; font-family: 'Inter', sans-serif; }
-        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .input-style { background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); transition: all 0.3s ease; }
-        .input-style:focus { border-color: #38bdf8; box-shadow: 0 0 10px rgba(56, 189, 248, 0.2); outline: none; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-ui { animation: slideIn 0.5s ease forwards; }
-    </style>
-</head>
-<body class="flex items-center justify-center p-6">
-    <div class="glass w-full max-w-lg rounded-3xl p-8 shadow-2xl animate-ui">
-        <header class="flex justify-between items-center mb-8">
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>MASTER CONSOLE</title><script src="https://cdn.tailwindcss.com"></script>
+<style>
+    body { background: #020617; color: white; font-family: 'JetBrains Mono', monospace; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); border-radius: 2rem; }
+    input, textarea { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem; color: #fff; width: 100%; padding: 12px; font-size: 13px; }
+    input:focus { border-color: #38bdf8; outline: none; box-shadow: 0 0 15px rgba(56, 189, 248, 0.2); }
+    .rep-bar { background: linear-gradient(90deg, #38bdf8, #818cf8); height: 100%; transition: width 1s ease; }
+</style></head>
+<body class="p-4">
+    <div class="glass w-full max-w-lg p-10 shadow-2xl animate-fade-in">
+        <div class="flex justify-between items-start mb-10">
             <div>
-                <h1 class="text-white text-2xl font-bold tracking-tight">Relay<span class="text-sky-400">Hub</span></h1>
-                <p class="text-slate-400 text-xs">SMTP Active & Encrypted</p>
+                <h1 class="text-2xl font-black italic tracking-tighter text-white">STEALTH<span class="text-sky-400">HUB</span></h1>
+                <p class="text-[9px] text-slate-500 font-bold uppercase tracking-[0.3em]">Protocol: 8DEA Dynamic Sync</p>
             </div>
             <div class="text-right">
-                <span class="text-[10px] text-slate-500 uppercase font-bold">Status</span>
-                <div class="flex items-center gap-2">
-                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span class="text-emerald-400 text-sm font-medium"><?php echo $status; ?></span>
-                </div>
+                <span class="text-[9px] text-slate-500 uppercase font-bold">Account Health</span>
+                <div class="text-2xl font-black text-sky-400"><?php echo $reputation; ?>%</div>
             </div>
-        </header>
+        </div>
 
-        <div class="mb-8">
-            <div class="flex justify-between items-end mb-2">
-                <span class="text-slate-300 text-xs font-semibold uppercase">Daily Usage</span>
-                <span class="text-slate-400 text-xs"><?php echo $data['count']; ?> / 2000</span>
+        <div class="grid grid-cols-2 gap-4 mb-8">
+            <div class="bg-black/40 p-4 rounded-2xl border border-white/5">
+                <p class="text-[9px] text-slate-500 uppercase mb-1">Today's Pulse</p>
+                <p class="text-lg font-bold"><?php echo $log['today']; ?> <span class="text-slate-600">/ 99</span></p>
             </div>
-            <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-1000" style="width: <?php echo ($data['count']/2000)*100; ?>%"></div>
+            <div class="bg-black/40 p-4 rounded-2xl border border-white/5">
+                <p class="text-[9px] text-slate-500 uppercase mb-1">Engine Status</p>
+                <p class="text-lg font-bold <?php echo $status=='SUCCESS'?'text-emerald-400':'text-sky-400'; ?>"><?php echo $status; ?></p>
             </div>
         </div>
 
         <form method="POST" class="space-y-4">
             <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <label class="text-slate-400 text-[10px] uppercase font-bold ml-1 mb-1 block">Sender Name</label>
-                    <input name="name" required class="input-style w-full rounded-xl px-4 py-3 text-white text-sm" placeholder="e.g. Admin">
-                </div>
-                <div>
-                    <label class="text-slate-400 text-[10px] uppercase font-bold ml-1 mb-1 block">Recipient</label>
-                    <input name="to" type="email" required class="input-style w-full rounded-xl px-4 py-3 text-white text-sm" placeholder="target@mail.com">
-                </div>
+                <input name="name" placeholder="FROM NAME" required>
+                <input name="to" placeholder="TARGET@MAIL.COM" type="email" required>
             </div>
-            
-            <div>
-                <label class="text-slate-400 text-[10px] uppercase font-bold ml-1 mb-1 block">Subject</label>
-                <input name="sub" required class="input-style w-full rounded-xl px-4 py-3 text-white text-sm" placeholder="Security Update">
-            </div>
-
-            <div>
-                <label class="text-slate-400 text-[10px] uppercase font-bold ml-1 mb-1 block">Content (HTML)</label>
-                <textarea name="msg" class="input-style w-full rounded-xl px-4 py-3 text-white text-sm h-32 resize-none" placeholder="Write your message..."></textarea>
-            </div>
-
-            <button type="submit" class="w-full bg-white hover:bg-sky-400 text-slate-900 font-bold py-4 rounded-2xl transition-all active:scale-95 shadow-lg shadow-sky-500/10">
-                Send Message
-            </button>
+            <input name="sub" placeholder="SUBJECT LINE" required>
+            <textarea name="msg" placeholder="HTML PAYLOAD..." class="h-32 resize-none"></textarea>
+            <button class="w-full bg-sky-500 hover:bg-white hover:text-black text-white font-black py-4 rounded-2xl transition-all active:scale-95 uppercase tracking-widest text-xs">Execute Protocol</button>
         </form>
     </div>
-</body>
-</html>
+</body></html>
 EOF
 
-# 4. Set Permissions
+# 4. Final Permissions & Launch
 RUN chown -R nginx:nginx /var/www/localhost/htdocs
-
 EXPOSE 80
-# 5. Fast Launch
 CMD php-fpm82 && nginx -g "daemon off;"

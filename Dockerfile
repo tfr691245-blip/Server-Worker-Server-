@@ -1,11 +1,11 @@
 FROM alpine:3.19
 
-# 1. CORE STACK
+# 1. INSTALL CORE STACK
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
-    tzdata && mkdir -p /run/nginx /var/www/localhost/htdocs
+    tzdata curl && mkdir -p /run/nginx /var/www/localhost/htdocs
 
-# 2. STABLE NGINX
+# 2. STABLE NGINX CONFIG
 RUN echo 'server { \
     listen 80; \
     root /var/www/localhost/htdocs; \
@@ -14,10 +14,11 @@ RUN echo 'server { \
         fastcgi_pass 127.0.0.1:9000; \
         include fastcgi_params; \
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; \
+        fastcgi_read_timeout 300; \
     } \
 }' > /etc/nginx/http.d/default.conf
 
-# 3. MASTER HUD CODE (Clean & Fast)
+# 3. MASTER HUD PHP CODE
 RUN cat <<'EOF' > /var/www/localhost/htdocs/index.php
 <?php
 session_start();
@@ -60,11 +61,12 @@ $token = bin2hex(random_bytes(16));
     body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
     .box { background: #080808; border: 1px solid #151515; border-radius: 2rem; width: 100%; max-width: 450px; padding: 35px; }
     input, textarea { background: #000; border: 1px solid #222; border-radius: 0.75rem; color: #fff; width: 100%; padding: 14px; margin-bottom: 12px; outline: none; font-size: 14px; }
-    .btn { background: #fff; color: #000; font-weight: 900; width: 100%; padding: 18px; border-radius: 1rem; text-transform: uppercase; font-size: 12px; }
+    .btn { background: #fff; color: #000; font-weight: 900; width: 100%; padding: 18px; border-radius: 1rem; text-transform: uppercase; font-size: 12px; cursor: pointer; }
+    .btn:hover { background: #38bdf8; color: #fff; }
 </style></head>
 <body><div class="box">
     <div class="flex justify-between items-start mb-10">
-        <div><h1 class="text-2xl font-black italic">MASTER<span class="text-sky-400">SYNC</span></h1><a href="https://mail.google.com/mail/u/0/#search/newer_than%3A1d" target="_blank" class="text-[9px] text-sky-500 font-bold uppercase hover:underline">Google Count →</a></div>
+        <div><h1 class="text-2xl font-black italic">MASTER<span class="text-sky-400">SYNC</span></h1><a href="https://mail.google.com/mail/u/0/#search/newer_than%3A1d" target="_blank" class="text-[9px] text-sky-500 font-bold uppercase hover:underline">Verify →</a></div>
         <div class="text-right"><p class="text-[9px] text-slate-600 font-bold uppercase">Sent</p><p class="text-3xl font-black"><?php echo $reg['today']; ?><span class="text-slate-800 text-xs italic">/99</span></p></div>
     </div>
     <form method="POST">
@@ -73,15 +75,17 @@ $token = bin2hex(random_bytes(16));
         <input name="to" placeholder="TO@EMAIL.COM" type="email" required>
         <input name="sub" placeholder="SUBJECT" required>
         <textarea name="msg" placeholder="HTML..." class="h-32 resize-none"></textarea>
-        <button class="btn">Fire Protocol</button>
+        <button class="btn">Execute Protocol</button>
     </form>
 </div></body></html>
 EOF
 
-# 4. UNIVERSAL PERMISSIONS
-RUN chmod -R 777 /var/www/localhost/htdocs && chown -R nginx:nginx /var/www/localhost/htdocs
+# 4. REPAIR PERMISSIONS
+RUN touch /var/www/localhost/htdocs/registry.json && \
+    chmod 777 /var/www/localhost/htdocs/registry.json && \
+    chown -R nginx:nginx /var/www/localhost/htdocs
 
 EXPOSE 80
 
-# 5. THE "NEVER-FAIL" STARTUP SCRIPT
-CMD php-fpm82 -D && nginx -g "daemon off;"
+# 5. STARTUP SCRIPT (Ensures PHP-FPM is ready before Nginx starts)
+CMD php-fpm82 && nginx -g "daemon off;"

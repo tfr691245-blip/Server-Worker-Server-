@@ -1,12 +1,13 @@
-FROM alpine:3.19
+# Master Stealth Relay - AIO Build (April 2026)
+FROM alpine:3.23
 
-# 1. Install Performance Stack
+# 1. Install high-performance stack
 RUN apk add --no-cache \
-    nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
-    tzdata && mkdir -p /run/nginx /var/www/localhost/htdocs /var/lib/mail-tracker \
-    && chown -R nginx:nginx /var/lib/mail-tracker
+    nginx php83 php83-fpm php83-openssl php83-mbstring php83-json \
+    tzdata && mkdir -p /run/nginx /var/www/localhost/htdocs /var/lib/mail-logs \
+    && chown -R nginx:nginx /var/lib/mail-logs
 
-# 2. Optimized Nginx Config (Instant Pass-through)
+# 2. Optimized Nginx Config
 RUN echo 'server { \
     listen 80; \
     root /var/www/localhost/htdocs; \
@@ -15,87 +16,104 @@ RUN echo 'server { \
         fastcgi_pass 127.0.0.1:9000; \
         include fastcgi_params; \
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name; \
-        fastcgi_keep_conn on; \
     } \
 }' > /etc/nginx/http.d/default.conf
 
-# 3. Create the AIO Web UI + Direct Engine Script
+# 3. Create the Master HUD Index file directly
 RUN cat <<'EOF' > /var/www/localhost/htdocs/index.php
 <?php
-// --- CORE CONFIG ---
-$smtp_host = 'ssl://142.251.10.108'; // Fast Direct IP
-$smtp_port = 465;
-$user = 'pyypl2005@gmail.com';
-$pass = 'gnrbyxyyjxyoaljv';
-$alias = 'verified@elite.qzz.io';
-$limit_file = '/var/lib/mail-tracker/count.json';
-$daily_max = 2000;
-
-// Load Tracker
-$data = file_exists($limit_file) ? json_decode(file_get_contents($limit_file), true) : ['date' => date('Y-m-d'), 'count' => 0];
-if ($data['date'] !== date('Y-m-d')) { $data = ['date' => date('Y-m-d'), 'count' => 0]; }
-
-$status = "SYSTEM ONLINE";
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $to = $_POST['to'];
-    $name = $_POST['name'];
-    $sub = $_POST['sub'];
-    $msg = $_POST['msg'];
-
-    $headers = [
-        "From: $name <$alias>",
-        "To: $to",
-        "Subject: $sub",
-        "MIME-Version: 1.0",
-        "Content-Type: text/html; charset=UTF-8"
-    ];
-
+$limit_file = '/var/lib/mail-logs/limit.json';
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['action'])) {
+    header('Content-Type: application/json');
+    $config = json_decode($_POST['config'], true);
     $ctx = stream_context_create(['ssl' => ['verify_peer'=>false,'verify_peer_name'=>false]]);
-    $sock = @stream_socket_client($smtp_host.':'.$smtp_port, $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
-
+    $sock = @stream_socket_client('ssl://'.$config['host'].':465', $errno, $errstr, 5, STREAM_CLIENT_CONNECT, $ctx);
     if ($sock) {
+        $logs = [];
+        $cmd = function($s) use ($sock, &$logs) { 
+            fwrite($sock, $s); $logs[] = "OUT: " . trim($s);
+            $r = fread($sock, 512); $logs[] = "IN: " . trim($r);
+        };
         fread($sock, 512);
-        fwrite($sock, "EHLO elite.qzz.io\r\n"); fread($sock, 512);
-        fwrite($sock, "AUTH LOGIN\r\n"); fread($sock, 512);
-        fwrite($sock, base64_encode($user)."\r\n"); fread($sock, 512);
-        fwrite($sock, base64_encode($pass)."\r\n"); fread($sock, 512);
-        fwrite($sock, "MAIL FROM: <$user>\r\n"); fread($sock, 512);
-        fwrite($sock, "RCPT TO: <$to>\r\n"); fread($sock, 512);
-        fwrite($sock, "DATA\r\n"); fread($sock, 512);
-        fwrite($sock, implode("\r\n", $headers) . "\r\n\r\n" . $msg . "\r\n.\r\n");
-        fwrite($sock, "QUIT\r\n");
-        fclose($sock);
-        
-        $data['count']++;
-        file_put_contents($limit_file, json_encode($data));
-        $status = "SENT SUCCESS";
-    } else { $status = "CONNECTION TIMEOUT"; }
+        $cmd("EHLO elite.relay\r\n");
+        $cmd("AUTH LOGIN\r\n");
+        $cmd(base64_encode($config['user'])."\r\n");
+        $cmd(base64_encode($config['pass'])."\r\n");
+        $cmd("MAIL FROM: <".$config['user'].">\r\n");
+        $cmd("RCPT TO: <".$_POST['to'].">\r\n");
+        $cmd("DATA\r\n");
+        $headers = "From: ".$_POST['name']." <".$config['alias'].">\r\nTo: <".$_POST['to'].">\r\nSubject: ".$_POST['sub']."\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n";
+        $cmd($headers . $_POST['msg'] . "\r\n.\r\n");
+        $cmd("QUIT\r\n"); fclose($sock);
+        $data = file_exists($limit_file) ? json_decode(file_get_contents($limit_file), true) : ['d'=>date('Y-m-d'), 'c'=>0];
+        if($data['d'] !== date('Y-m-d')) $data = ['d'=>date('Y-m-d'), 'c'=>0];
+        $data['c']++; file_put_contents($limit_file, json_encode($data));
+        echo json_encode(['status'=>'SUCCESS', 'logs'=>$logs, 'count'=>$data['c']]);
+    } else { echo json_encode(['status'=>'ERROR', 'error'=>$errstr]); }
+    exit;
 }
 ?>
-<!DOCTYPE html><html><body style="background:#05070a;color:#00ff41;font-family:monospace;padding:20px;display:flex;justify-content:center;">
-    <div style="border:1px solid #00ff41;padding:20px;width:100%;max-width:400px;background:#0a0c10;">
-        <h3 style="margin:0 0 10px 0;text-align:center;">APEX STEALTH RELAY</h3>
-        
-        <div style="background:#000;border:1px solid #333;padding:10px;margin-bottom:20px;font-size:12px;">
-            LIMIT: <?php echo $data['count']; ?> / <?php echo $daily_max; ?> [<?php echo round(($data['count']/$daily_max)*100, 1); ?>%]
-            <div style="width:100%;height:3px;background:#222;margin-top:5px;"><div style="width:<?php echo ($data['count']/$daily_max)*100; ?>%;height:100%;background:#00ff41;"></div></div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><title>APEX CONSOLE</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #020406; color: #00ff41; font-family: monospace; }
+        .hud { border: 1px solid rgba(0,255,65,0.3); background: rgba(5,7,10,0.9); }
+        input, textarea { background: #000; border: 1px solid #333; color: #fff; padding: 8px; outline: none; font-size: 12px; }
+        input:focus { border-color: #00ff41; }
+    </style>
+</head>
+<body class="p-4 md:p-10">
+    <div class="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div class="lg:col-span-4 hud p-6">
+            <h3 class="text-xs font-bold mb-4 border-b border-[#00ff41] pb-2 text-white">SMTP AUTH</h3>
+            <div class="flex flex-col gap-3">
+                <input id="host" placeholder="Host (142.251.10.108)">
+                <input id="user" placeholder="Gmail User">
+                <input id="pass" type="password" placeholder="App Password">
+                <input id="alias" placeholder="Sender Alias">
+            </div>
+            <div class="mt-6">
+                <div class="flex justify-between text-[10px] mb-1"><span>CAPACITY</span><span id="cl">0/2000</span></div>
+                <div class="w-full bg-[#111] h-1"><div id="bar" class="h-full bg-[#00ff41]" style="width:0%"></div></div>
+            </div>
         </div>
-
-        <form method="POST">
-            <input name="name" placeholder="Sender Name" required style="width:100%;background:#000;border:1px solid #333;color:#fff;padding:10px;margin-bottom:10px;box-sizing:border-box;">
-            <input name="to" placeholder="Recipient Email" required style="width:100%;background:#000;border:1px solid #333;color:#fff;padding:10px;margin-bottom:10px;box-sizing:border-box;">
-            <input name="sub" placeholder="Subject" required style="width:100%;background:#000;border:1px solid #333;color:#fff;padding:10px;margin-bottom:10px;box-sizing:border-box;">
-            <textarea name="msg" placeholder="HTML Message" style="width:100%;background:#000;border:1px solid #333;color:#fff;padding:10px;height:100px;margin-bottom:10px;box-sizing:border-box;"></textarea>
-            <button style="width:100%;padding:12px;background:#00ff41;color:#000;font-weight:bold;border:none;cursor:pointer;text-transform:uppercase;">Fire Engine</button>
-        </form>
-        <div style="margin-top:15px;font-size:11px;text-align:center;color:#888;">STATUS: <span style="color:#fff"><?php echo $status; ?></span></div>
+        <div class="lg:col-span-8 hud p-6">
+            <h3 class="text-xs font-bold mb-4 border-b border-[#00ff41] pb-2 text-white">INJECTION ENGINE</h3>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <input id="name" placeholder="From Name">
+                <input id="to" placeholder="Target Email">
+            </div>
+            <input id="sub" placeholder="Subject" class="w-full mb-4">
+            <textarea id="msg" placeholder="HTML Body" class="w-full h-32 mb-4"></textarea>
+            <button onclick="fire()" class="w-full bg-[#00ff41] text-black font-bold py-3 hover:bg-white transition-all uppercase">Execute Fire</button>
+            <div id="term" class="mt-4 bg-black p-3 h-32 overflow-y-auto text-[10px] border border-[#222]"></div>
+        </div>
     </div>
-</body></html>
+    <script>
+        const keys = ['host','user','pass','alias'];
+        keys.forEach(k => document.getElementById(k).value = localStorage.getItem('ax_'+k) || '');
+        async function fire(){
+            const cfg = {}; keys.forEach(k => { cfg[k] = document.getElementById(k).value; localStorage.setItem('ax_'+k, cfg[k]); });
+            const fd = new FormData(); fd.append('action','send'); fd.append('config', JSON.stringify(cfg));
+            ['name','to','sub','msg'].forEach(f => fd.append(f, document.getElementById(f).value));
+            const res = await fetch('', {method:'POST', body:fd}).then(r => r.json());
+            const term = document.getElementById('term');
+            if(res.logs) res.logs.forEach(l => term.innerHTML += `<div>${l}</div>`);
+            if(res.status === 'SUCCESS'){
+                document.getElementById('cl').innerText = res.count + '/2000';
+                document.getElementById('bar').style.width = (res.count/2000*100) + '%';
+            }
+            term.scrollTop = term.scrollHeight;
+        }
+    </script>
+</body>
+</html>
 EOF
 
-# 4. Set Permissions
+# 4. Final settings
 RUN chown -R nginx:nginx /var/www/localhost/htdocs
-
 EXPOSE 80
-# 5. Fast Launch
-CMD php-fpm82 && nginx -g "daemon off;"
+CMD php-fpm83 && nginx -g "daemon off;"

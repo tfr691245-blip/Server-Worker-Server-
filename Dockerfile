@@ -1,12 +1,12 @@
 FROM alpine:3.19
 
-# 1. INSTALL
+# 1. SYSTEM INSTALL
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
     php82-session php82-curl \
     tzdata supervisor && mkdir -p /run/nginx /var/www/localhost/htdocs /var/log/supervisor
 
-# 2. CONFIGS
+# 2. SERVER CONFIGS
 RUN sed -i 's/;catch_workers_output = yes/catch_workers_output = yes/g' /etc/php82/php-fpm.d/www.conf
 RUN cat > /etc/nginx/http.d/default.conf <<'EOF'
 server {
@@ -38,7 +38,7 @@ stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
 EOF
 
-# 3. APP (Optimized Port 465 SSL)
+# 3. APP LOGIC (Force Direct SSL Handshake)
 RUN cat > /var/www/localhost/htdocs/index.php <<'EOF'
 <?php
 session_start();
@@ -48,23 +48,33 @@ if(!file_exists($log)) { file_put_contents($log, json_encode(['today'=>0,'date'=
 $reg = json_decode(file_get_contents($log), true);
 if($reg['date'] != date('Y-m-d')) { $reg = ['today'=>0,'date'=>date('Y-m-d')]; }
 
-function get_official_status() {
+function get_google_auth() {
     $ctx = stream_context_create(['ssl'=>['verify_peer'=>false,'verify_peer_name'=>false]]);
-    $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 3, STREAM_CLIENT_CONNECT, $ctx);
+    $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 4, STREAM_CLIENT_CONNECT, $ctx);
     if(!$sock) return 'OFFLINE';
+    
+    fgets($sock, 512); // Banner
+    fwrite($sock, "EHLO gmail.com\r\n");
+    while($line = fgets($sock, 512)) { if(substr($line,3,1) == ' ') break; }
+    
+    fwrite($sock, "AUTH LOGIN\r\n");
     fgets($sock, 512);
-    fwrite($sock, "EHLO smtp.gmail.com\r\n"); fgets($sock, 512);
-    fwrite($sock, "AUTH LOGIN\r\n"); fgets($sock, 512);
-    fwrite($sock, base64_encode('pyypl2005@gmail.com')."\r\n"); fgets($sock, 512);
+    fwrite($sock, base64_encode('pyypl2005@gmail.com')."\r\n");
+    fgets($sock, 512);
     fwrite($sock, base64_encode('gnrbyxyyjxyoaljv')."\r\n");
     $res = fgets($sock, 512);
-    fwrite($sock, "QUIT\r\n"); fclose($sock);
-    return (strpos($res, '235') !== false) ? 'READY' : 'AUTH_FAIL';
+    
+    fwrite($sock, "QUIT\r\n");
+    fclose($sock);
+    
+    if(strpos($res, '235') !== false) return 'READY';
+    if(strpos($res, '454') !== false || strpos($res, '554') !== false) return 'LIMITED';
+    return 'AUTH_FAIL';
 }
 
 if(isset($_GET['status'])) {
     header('Content-Type: application/json');
-    $st = get_official_status();
+    $st = get_google_auth();
     echo json_encode(['status' => $st, 'rem' => ($st == 'READY' ? ($max - $reg['today']) : 0)]); exit;
 }
 
@@ -73,17 +83,28 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     $to=$_POST['to']; $name=$_POST['name']; $sub=$_POST['sub']; $msg=$_POST['msg'];
     $ctx = stream_context_create(['ssl'=>['verify_peer'=>false,'verify_peer_name'=>false]]);
     $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 5, STREAM_CLIENT_CONNECT, $ctx);
+    
     if($sock) {
         fgets($sock, 512);
-        fwrite($sock, "EHLO smtp.gmail.com\r\nAUTH LOGIN\r\n".base64_encode('pyypl2005@gmail.com')."\r\n".base64_encode('gnrbyxyyjxyoaljv')."\r\n");
-        $auth = ''; while($line = fgets($sock, 512)) { if(strpos($line, '235') !== false) { $auth='ok'; break; } if(strpos($line, '535') !== false) break; }
-        if($auth == 'ok') {
-            fwrite($sock, "MAIL FROM: <pyypl2005@gmail.com>\r\nRCPT TO: <$to>\r\nDATA\r\nFrom: $name <v@q.io>\r\nTo: $to\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\nQUIT\r\n");
+        fwrite($sock, "EHLO gmail.com\r\n");
+        while($line = fgets($sock, 512)) { if(substr($line,3,1) == ' ') break; }
+        fwrite($sock, "AUTH LOGIN\r\n"); fgets($sock, 512);
+        fwrite($sock, base64_encode('pyypl2005@gmail.com')."\r\n"); fgets($sock, 512);
+        fwrite($sock, base64_encode('gnrbyxyyjxyoaljv')."\r\n");
+        $auth = fgets($sock, 512);
+        
+        if(strpos($auth, '235') !== false) {
+            fwrite($sock, "MAIL FROM: <pyypl2005@gmail.com>\r\n"); fgets($sock, 512);
+            fwrite($sock, "RCPT TO: <$to>\r\n"); fgets($sock, 512);
+            fwrite($sock, "DATA\r\n"); fgets($sock, 512);
+            fwrite($sock, "From: $name <v@q.io>\r\nTo: $to\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\n");
+            fgets($sock, 512);
+            fwrite($sock, "QUIT\r\n");
             $reg['today']++; file_put_contents($log, json_encode($reg));
             echo json_encode(['status'=>'success']);
-        } else { echo json_encode(['status'=>'error', 'msg'=>'AUTH REJECTED']); }
+        } else { echo json_encode(['status'=>'error', 'msg'=>'GOOGLE_DENIED']); }
         fclose($sock);
-    } else { echo json_encode(['status'=>'error', 'msg'=>'CONN FAIL']); }
+    } else { echo json_encode(['status'=>'error', 'msg'=>'CONN_FAIL']); }
     exit;
 }
 ?>

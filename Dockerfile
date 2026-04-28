@@ -1,12 +1,12 @@
 FROM alpine:3.19
 
-# 1. INSTALL SYSTEM & PHP MODULES (Fixed for session_start error)
+# 1. SYSTEM INSTALL
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
-    php82-session php82-curl php82-dom \
+    php82-session php82-curl \
     tzdata supervisor && mkdir -p /run/nginx /var/www/localhost/htdocs /var/log/supervisor
 
-# 2. SYSTEM CONFIGS
+# 2. CONFIGS
 RUN sed -i 's/;catch_workers_output = yes/catch_workers_output = yes/g' /etc/php82/php-fpm.d/www.conf
 RUN cat > /etc/nginx/http.d/default.conf <<'EOF'
 server {
@@ -22,18 +22,30 @@ server {
 }
 EOF
 
+# FIXED: Added nodaemon=true and disabled log rotation (logfile_maxbytes=0)
 RUN cat > /etc/supervisord.conf <<'EOF'
 [supervisord]
 user=root
 nodaemon=true
 logfile=/dev/stdout
+logfile_maxbytes=0
+
 [program:php-fpm]
 command=php-fpm82 -F
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
 [program:nginx]
 command=nginx -g "daemon off;"
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
 EOF
 
-# 3. THE APP (99 LIMIT + REAL GOOGLE CHECK)
+# 3. APP LOGIC
 RUN cat > /var/www/localhost/htdocs/index.php <<'EOF'
 <?php
 session_start();
@@ -56,7 +68,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
         $auth_res = fread($sock, 1024);
         if (strpos($auth_res, '535') !== false || strpos($auth_res, '454') !== false) {
             $reg['blocked'] = true; file_put_contents($log, json_encode($reg));
-            echo json_encode(['status'=>'error', 'msg'=>'Google Limit/Auth Error']); exit;
+            echo json_encode(['status'=>'error', 'msg'=>'Google Account Limited']); exit;
         }
         fwrite($sock, "MAIL FROM: <pyypl2005@gmail.com>\r\nRCPT TO: <$to>\r\nDATA\r\nFrom: $name <v@q.io>\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\nQUIT\r\n");
         fclose($sock);
@@ -73,30 +85,27 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>MASTERSYNC</title>
     <style>
-        :root { --accent: #38bdf8; --bg: #000; }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; }
-        body { background: var(--bg); color: #fff; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-        .card { width: 90%; max-width: 420px; background: #0a0a0a; padding: 30px; border-radius: 24px; border: 1px solid #1a1a1a; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
-        h1 { font-size: 22px; } h1 span { color: var(--accent); }
-        .badge { background: #111; color: var(--accent); padding: 4px 10px; border-radius: 8px; font-size: 12px; border: 1px solid #222; }
-        input, textarea { width: 100%; padding: 15px; background: #111; border: 1px solid #222; border-radius: 12px; color: #fff; margin-bottom: 12px; outline: none; font-size: 16px; }
-        button { width: 100%; padding: 16px; background: #fff; color: #000; border: none; border-radius: 12px; font-weight: 800; cursor: pointer; }
-        #toast { position: fixed; top: 20px; padding: 10px 20px; border-radius: 10px; display: none; z-index: 1000; }
+        body { background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .card { width: 90%; max-width: 400px; background: #0a0a0a; padding: 30px; border-radius: 20px; border: 1px solid #1a1a1a; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .bal { color: #38bdf8; font-size: 12px; border: 1px solid #38bdf8; padding: 2px 8px; border-radius: 4px; }
+        input, textarea { width: 100%; padding: 14px; margin-bottom: 10px; background: #111; border: 1px solid #222; border-radius: 10px; color: #fff; font-size: 16px; outline: none; }
+        button { width: 100%; padding: 16px; background: #fff; color: #000; border: none; border-radius: 10px; font-weight: 800; cursor: pointer; }
+        #toast { position: fixed; top: 10px; padding: 10px; border-radius: 5px; display: none; }
     </style>
 </head>
 <body>
     <div id="toast"></div>
     <div class="card">
         <div class="header">
-            <h1>MASTER<span>SYNC</span></h1>
-            <div class="badge">BAL: <span id="rem"><?php echo $reg['blocked'] ? '0' : ($max - $reg['today']); ?></span></div>
+            <h3>MASTERSYNC</h3>
+            <div class="bal">LIMIT: <span id="rem"><?php echo $reg['blocked'] ? '0' : ($max - $reg['today']); ?></span></div>
         </div>
         <form id="f">
             <input type="text" name="name" placeholder="FROM NAME" required>
-            <input type="email" name="to" placeholder="RECIPIENT EMAIL" required>
-            <input type="text" name="sub" placeholder="SUBJECT LINE" required>
-            <textarea name="msg" placeholder="MESSAGE BODY (HTML)" rows="5" required></textarea>
+            <input type="email" name="to" placeholder="TO EMAIL" required>
+            <input type="text" name="sub" placeholder="SUBJECT" required>
+            <textarea name="msg" placeholder="MESSAGE (HTML)" rows="5" required></textarea>
             <button type="submit" id="b">EXECUTE PROTOCOL</button>
         </form>
     </div>
@@ -108,7 +117,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
                 const res = await fetch('?ajax=1', { method: 'POST', body: new FormData(f) });
                 const d = await res.json();
                 if(d.status === 'success') {
-                    r.innerText = d.left; show('SUCCESS', '#22c55e'); f.reset();
+                    r.innerText = d.left; show('SENT', '#22c55e'); f.reset();
                 } else { 
                     show(d.msg.toUpperCase(), '#ef4444'); 
                     if(d.msg.includes('Limit')) r.innerText = '0';
@@ -116,7 +125,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
             } catch (e) { show('ERROR', '#ef4444'); }
             b.disabled = false; b.innerText = 'EXECUTE PROTOCOL';
         };
-        function show(txt, c) { t.innerText = txt; t.style.background = c; t.style.display = 'block'; setTimeout(()=>t.style.display='none', 3000); }
+        function show(txt, c) { t.innerText = txt; t.style.background = c; t.style.display = 'block'; setTimeout(()=>t.style.display='none', 2000); }
     </script>
 </body>
 </html>

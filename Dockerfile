@@ -1,6 +1,6 @@
 FROM alpine:3.19
 
-# 1. SYSTEM
+# 1. INSTALL
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
     php82-session php82-curl \
@@ -38,7 +38,7 @@ stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
 EOF
 
-# 3. APP LOGIC (Real-Time Official Check)
+# 3. APP (Optimized Port 465 SSL)
 RUN cat > /var/www/localhost/htdocs/index.php <<'EOF'
 <?php
 session_start();
@@ -48,24 +48,18 @@ if(!file_exists($log)) { file_put_contents($log, json_encode(['today'=>0,'date'=
 $reg = json_decode(file_get_contents($log), true);
 if($reg['date'] != date('Y-m-d')) { $reg = ['today'=>0,'date'=>date('Y-m-d')]; }
 
-function smtp_cmd($s, $c) { fwrite($s, $c."\r\n"); return fgets($s, 512); }
-
 function get_official_status() {
-    $sock = @stream_socket_client('tcp://smtp.gmail.com:587', $e, $s, 3);
+    $ctx = stream_context_create(['ssl'=>['verify_peer'=>false,'verify_peer_name'=>false]]);
+    $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 3, STREAM_CLIENT_CONNECT, $ctx);
     if(!$sock) return 'OFFLINE';
     fgets($sock, 512);
-    smtp_cmd($sock, "EHLO smtp.gmail.com");
-    smtp_cmd($sock, "STARTTLS");
-    if(!@stream_socket_enable_crypto($sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) { fclose($sock); return 'TLS_ERR'; }
-    smtp_cmd($sock, "EHLO smtp.gmail.com");
-    smtp_cmd($sock, "AUTH LOGIN");
-    smtp_cmd($sock, base64_encode('pyypl2005@gmail.com'));
-    $res = smtp_cmd($sock, base64_encode('gnrbyxyyjxyoaljv'));
-    smtp_cmd($sock, "QUIT");
-    fclose($sock);
-    if(strpos($res, '235') !== false) return 'READY';
-    if(strpos($res, '454') !== false || strpos($res, '554') !== false) return 'LIMITED';
-    return 'AUTH_FAIL';
+    fwrite($sock, "EHLO smtp.gmail.com\r\n"); fgets($sock, 512);
+    fwrite($sock, "AUTH LOGIN\r\n"); fgets($sock, 512);
+    fwrite($sock, base64_encode('pyypl2005@gmail.com')."\r\n"); fgets($sock, 512);
+    fwrite($sock, base64_encode('gnrbyxyyjxyoaljv')."\r\n");
+    $res = fgets($sock, 512);
+    fwrite($sock, "QUIT\r\n"); fclose($sock);
+    return (strpos($res, '235') !== false) ? 'READY' : 'AUTH_FAIL';
 }
 
 if(isset($_GET['status'])) {
@@ -77,19 +71,14 @@ if(isset($_GET['status'])) {
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     header('Content-Type: application/json');
     $to=$_POST['to']; $name=$_POST['name']; $sub=$_POST['sub']; $msg=$_POST['msg'];
-    $sock = @stream_socket_client('tcp://smtp.gmail.com:587', $e, $s, 5);
+    $ctx = stream_context_create(['ssl'=>['verify_peer'=>false,'verify_peer_name'=>false]]);
+    $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 5, STREAM_CLIENT_CONNECT, $ctx);
     if($sock) {
-        fgets($sock, 512); smtp_cmd($sock, "EHLO smtp.gmail.com"); smtp_cmd($sock, "STARTTLS");
-        stream_socket_enable_crypto($sock, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
-        smtp_cmd($sock, "EHLO smtp.gmail.com"); smtp_cmd($sock, "AUTH LOGIN");
-        smtp_cmd($sock, base64_encode('pyypl2005@gmail.com'));
-        $auth = smtp_cmd($sock, base64_encode('gnrbyxyyjxyoaljv'));
-        if(strpos($auth, '235') !== false) {
-            smtp_cmd($sock, "MAIL FROM: <pyypl2005@gmail.com>");
-            smtp_cmd($sock, "RCPT TO: <$to>");
-            smtp_cmd($sock, "DATA");
-            fwrite($sock, "From: $name <v@q.io>\r\nTo: $to\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\n");
-            smtp_cmd($sock, "QUIT");
+        fgets($sock, 512);
+        fwrite($sock, "EHLO smtp.gmail.com\r\nAUTH LOGIN\r\n".base64_encode('pyypl2005@gmail.com')."\r\n".base64_encode('gnrbyxyyjxyoaljv')."\r\n");
+        $auth = ''; while($line = fgets($sock, 512)) { if(strpos($line, '235') !== false) { $auth='ok'; break; } if(strpos($line, '535') !== false) break; }
+        if($auth == 'ok') {
+            fwrite($sock, "MAIL FROM: <pyypl2005@gmail.com>\r\nRCPT TO: <$to>\r\nDATA\r\nFrom: $name <v@q.io>\r\nTo: $to\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\nQUIT\r\n");
             $reg['today']++; file_put_contents($log, json_encode($reg));
             echo json_encode(['status'=>'success']);
         } else { echo json_encode(['status'=>'error', 'msg'=>'AUTH REJECTED']); }
@@ -132,13 +121,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     <script>
         const f=document.getElementById('f'), b=document.getElementById('b'), s=document.getElementById('stat'), t=document.getElementById('tst');
         async function check() {
-            const res = await fetch('?status=1');
-            const d = await res.json();
-            s.innerText = d.status + ': ' + d.rem;
-            s.style.color = s.style.borderColor = (d.status==='READY') ? '#38bdf8' : '#ef4444';
+            try {
+                const res = await fetch('?status=1');
+                const d = await res.json();
+                s.innerText = d.status + ': ' + d.rem;
+                s.style.color = s.style.borderColor = (d.status==='READY') ? '#38bdf8' : '#ef4444';
+            } catch(e) { s.innerText = 'OFFLINE'; }
         }
         f.onsubmit = async (e) => {
-            e.preventDefault(); b.disabled = true; b.innerText = 'SENDING...';
+            e.preventDefault(); b.disabled = true; b.innerText = 'WAIT...';
             const res = await fetch('?ajax=1', { method: 'POST', body: new FormData(f) });
             const d = await res.json();
             if(d.status === 'success') { show('SENT', '#22c55e'); f.reset(); check(); } 

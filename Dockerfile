@@ -1,12 +1,12 @@
 FROM alpine:3.19
 
-# 1. INSTALL
+# 1. SYSTEM
 RUN apk add --no-cache \
     nginx php82 php82-fpm php82-openssl php82-mbstring php82-json \
     php82-session php82-curl \
     tzdata supervisor && mkdir -p /run/nginx /var/www/localhost/htdocs /var/log/supervisor
 
-# 2. CONFIGS (No-Rotation)
+# 2. CONFIGS
 RUN sed -i 's/;catch_workers_output = yes/catch_workers_output = yes/g' /etc/php82/php-fpm.d/www.conf
 RUN cat > /etc/nginx/http.d/default.conf <<'EOF'
 server {
@@ -38,7 +38,7 @@ stdout_logfile=/dev/stdout
 stdout_logfile_maxbytes=0
 EOF
 
-# 3. APP (REAL GOOGLE TELEMETRY)
+# 3. APP LOGIC (REAL GOOGLE HANDSHAKE CHECK)
 RUN cat > /var/www/localhost/htdocs/index.php <<'EOF'
 <?php
 session_start();
@@ -48,47 +48,43 @@ if(!file_exists($log)) { file_put_contents($log, json_encode(['today'=>0,'date'=
 $reg = json_decode(file_get_contents($log), true);
 if($reg['date'] != date('Y-m-d')) { $reg = ['today'=>0,'date'=>date('Y-m-d'),'blocked'=>false]; }
 
-// FUNCTION TO CHECK ACTUAL GOOGLE STATUS
-function check_google() {
+function get_google_status() {
     $ctx = stream_context_create(['ssl' => ['verify_peer'=>false,'verify_peer_name'=>false]]);
     $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 3, STREAM_CLIENT_CONNECT, $ctx);
-    if(!$sock) return false;
+    if(!$sock) return 'OFFLINE';
+    fread($sock, 1024);
     fwrite($sock, "EHLO relay\r\nAUTH LOGIN\r\n".base64_encode('pyypl2005@gmail.com')."\r\n".base64_encode('gnrbyxyyjxyoaljv')."\r\n");
     $res = fread($sock, 1024);
     fclose($sock);
-    // If 454 (Throttled) or 554 (Limit) or 535 (Auth fail due to lock)
-    if(strpos($res, '454') !== false || strpos($res, '554') !== false) return 'limited';
-    if(strpos($res, '235') !== false) return 'ok';
-    return 'error';
+    if(strpos($res, '454') !== false || strpos($res, '554') !== false) return 'LIMITED';
+    if(strpos($res, '235') !== false) return 'READY';
+    return 'AUTH_ERR';
 }
 
-if(isset($_GET['check'])) {
+if(isset($_GET['status'])) {
     header('Content-Type: application/json');
-    $status = check_google();
-    if($status === 'limited') { $reg['blocked'] = true; file_put_contents($log, json_encode($reg)); }
-    echo json_encode(['used'=>$reg['today'], 'blocked'=>$reg['blocked']]); exit;
+    echo json_encode(['status' => get_google_status(), 'used' => $reg['today']]); exit;
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     header('Content-Type: application/json');
-    if($reg['today'] >= $max || $reg['blocked']) { echo json_encode(['status'=>'error','msg'=>'G-LIMIT REACHED']); exit; }
+    if($reg['today'] >= $max) { echo json_encode(['status'=>'error','msg'=>'SYSTEM LIMIT']); exit; }
     
     $to=$_POST['to']; $name=$_POST['name']; $sub=$_POST['sub']; $msg=$_POST['msg'];
     $ctx = stream_context_create(['ssl' => ['verify_peer'=>false,'verify_peer_name'=>false]]);
     $sock = @stream_socket_client('ssl://smtp.gmail.com:465', $e, $s, 5, STREAM_CLIENT_CONNECT, $ctx);
     
     if($sock) {
+        fread($sock, 1024);
         fwrite($sock, "EHLO relay\r\nAUTH LOGIN\r\n".base64_encode('pyypl2005@gmail.com')."\r\n".base64_encode('gnrbyxyyjxyoaljv')."\r\n");
-        $r = fread($sock, 1024);
-        if(strpos($r, '454') !== false || strpos($r, '554') !== false) {
-            $reg['blocked'] = true; file_put_contents($log, json_encode($reg));
-            echo json_encode(['status'=>'error','msg'=>'GOOGLE BLOCKED']); exit;
-        }
+        $auth = fread($sock, 1024);
+        if(strpos($auth, '235') === false) { echo json_encode(['status'=>'error','msg'=>'GOOGLE DENIED']); exit; }
+        
         fwrite($sock, "MAIL FROM: <pyypl2005@gmail.com>\r\nRCPT TO: <$to>\r\nDATA\r\nFrom: $name <v@q.io>\r\nSubject: $sub\r\nContent-Type: text/html\r\n\r\n$msg\r\n.\r\nQUIT\r\n");
         fclose($sock);
         $reg['today']++; file_put_contents($log, json_encode($reg));
         echo json_encode(['status'=>'success','used'=>$reg['today']]);
-    } else { echo json_encode(['status'=>'error','msg'=>'OFFLINE']); }
+    } else { echo json_encode(['status'=>'error','msg'=>'CONN FAIL']); }
     exit;
 }
 ?>
@@ -113,7 +109,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
     <div class="card">
         <div class="header">
             <h3>MASTERSYNC</h3>
-            <div class="badge">OFFICIAL: <span id="rem">--</span>/99</div>
+            <div class="badge" id="stat">CHECKING...</div>
         </div>
         <form id="f">
             <input type="text" name="name" placeholder="FROM NAME" required>
@@ -124,22 +120,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_GET['ajax'])) {
         </form>
     </div>
     <script>
-        const f = document.getElementById('f'), b = document.getElementById('b'), r = document.getElementById('rem'), t = document.getElementById('toast');
-        async function sync() {
-            const res = await fetch('?check=1');
+        const f = document.getElementById('f'), b = document.getElementById('b'), s = document.getElementById('stat'), t = document.getElementById('toast');
+        async function check() {
+            const res = await fetch('?status=1');
             const d = await res.json();
-            r.innerText = d.blocked ? '0' : (99 - d.used);
+            s.innerText = d.status + ': ' + (99 - d.used);
+            if(d.status === 'LIMITED') s.style.borderColor = 'red';
         }
         f.onsubmit = async (e) => {
-            e.preventDefault(); b.disabled = true; b.innerText = 'PROCESING...';
+            e.preventDefault(); b.disabled = true; b.innerText = 'WAIT...';
             const res = await fetch('?ajax=1', { method: 'POST', body: new FormData(f) });
             const d = await res.json();
-            if(d.status === 'success') { show('SENT', '#22c55e'); f.reset(); sync(); } 
-            else { show(d.msg, '#ef4444'); sync(); }
+            if(d.status === 'success') { show('SENT', '#22c55e'); f.reset(); check(); } 
+            else { show(d.msg, '#ef4444'); check(); }
             b.disabled = false; b.innerText = 'SEND MAIL';
         };
         function show(txt, c) { t.innerText = txt; t.style.background = c; t.style.display = 'block'; setTimeout(()=>t.style.display='none', 2500); }
-        sync();
+        check();
     </script>
 </body>
 </html>
